@@ -1,0 +1,34 @@
+http:
+  routers:
+    upstream:
+      rule: "Host(`localhost`)"
+      entryPoints:
+        - web
+      middlewares:
+        - oidc-auth
+      service: upstream
+
+  middlewares:
+    oidc-auth:
+      plugin:
+        oidc:
+          providerURL: "https://your-tenant.auth0.com"
+          clientID: "your-client-id"
+          sessionEncryptionKey: "your-32-byte-encryption-key!!"
+          audience: "https://your-api/audience"
+          scopes:
+            - openid
+            - profile
+            - email
+          callbackPath: "/oauth2/callback"
+          logoutPath: "/oauth2/logout"
+          cookieName: "oidc_session"
+          cookieSecure: false
+          forwardAccessToken: false
+          forwardIDToken: true
+
+  services:
+    upstream:
+      loadBalancer:
+        servers:
+          - url: "http://upstream:8080"

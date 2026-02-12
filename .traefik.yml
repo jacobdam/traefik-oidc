@@ -1,0 +1,10 @@
+displayName: OIDC PKCE Authentication
+type: middleware
+import: github.com/jacobdam/traefik-oidc
+
+summary: OIDC authentication middleware using PKCE flow for public clients
+
+testData:
+  providerURL: "https://accounts.google.com"
+  clientID: "test-client-id"
+  sessionEncryptionKey: "01234567890123456789012345678901"

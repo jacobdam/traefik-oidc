@@ -1,0 +1,15 @@
+services:
+  traefik:
+    image: traefik:v3.3
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - .:/plugins-local/src/github.com/jacobdam/traefik-oidc:ro
+
+  upstream:
+    build: ./testapp
+    expose:
+      - "8080"
