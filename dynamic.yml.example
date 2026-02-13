@@ -24,8 +24,7 @@ http:
           logoutPath: "/oauth2/logout"
           cookieName: "oidc_session"
           cookieSecure: false
-          forwardAccessToken: false
-          forwardIDToken: true
+          forwardAuth: "id_token"
 
   services:
     upstream:

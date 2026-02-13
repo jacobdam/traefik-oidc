@@ -10,14 +10,14 @@ import (
 // CreateConfig creates the default plugin configuration.
 func CreateConfig() *Config {
 	return &Config{
-		Scopes:             []string{"openid", "profile", "email"},
-		CallbackPath:       "/oauth2/callback",
-		LogoutPath:         "/oauth2/logout",
-		CookieName:         "oidc_session",
-		CookieSecure:       true,
-		CookieSameSite:     "Lax",
-		ExcludedPaths:      []string{},
-		ForwardAccessToken: true,
+		Scopes:         []string{"openid", "profile", "email"},
+		CallbackPath:   "/oauth2/callback",
+		LogoutPath:     "/oauth2/logout",
+		CookieName:     "oidc_session",
+		CookieSecure:   true,
+		CookieSameSite: "Lax",
+		ExcludedPaths:  []string{},
+		ForwardAuth:    ForwardAuthNone,
 	}
 }
 

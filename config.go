@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// ForwardAuth constants define which token to forward to backend services.
+const (
+	ForwardAuthNone        = "none"
+	ForwardAuthIDToken     = "id_token"
+	ForwardAuthAccessToken = "access_token"
+)
+
 // Config holds the middleware configuration.
 type Config struct {
 	// Required fields
@@ -13,16 +20,15 @@ type Config struct {
 	SessionEncryptionKey string `json:"sessionEncryptionKey"` // AES-256 encryption key (32 bytes)
 
 	// Optional fields with defaults
-	Audience           string   `json:"audience"`           // OAuth audience (for Auth0 API)
-	Scopes             []string `json:"scopes"`             // OAuth scopes (default: openid, profile, email)
-	CallbackPath       string   `json:"callbackPath"`       // Callback endpoint (default: /oauth2/callback)
-	LogoutPath         string   `json:"logoutPath"`         // Logout endpoint (default: /oauth2/logout)
-	CookieName         string   `json:"cookieName"`         // Session cookie name (default: oidc_session)
-	CookieSecure       bool     `json:"cookieSecure"`       // HTTPS-only cookies (default: true)
-	CookieSameSite     string   `json:"cookieSameSite"`     // SameSite policy (default: Lax)
-	ExcludedPaths      []string `json:"excludedPaths"`      // Paths to skip auth
-	ForwardAccessToken bool     `json:"forwardAccessToken"` // Add Bearer header (default: true)
-	ForwardIDToken     bool     `json:"forwardIDToken"`     // Forward ID token instead of access token
+	Audience       string   `json:"audience"`       // OAuth audience (for Auth0 API)
+	Scopes         []string `json:"scopes"`         // OAuth scopes (default: openid, profile, email)
+	CallbackPath   string   `json:"callbackPath"`   // Callback endpoint (default: /oauth2/callback)
+	LogoutPath     string   `json:"logoutPath"`     // Logout endpoint (default: /oauth2/logout)
+	CookieName     string   `json:"cookieName"`     // Session cookie name (default: oidc_session)
+	CookieSecure   bool     `json:"cookieSecure"`   // HTTPS-only cookies (default: true)
+	CookieSameSite string   `json:"cookieSameSite"` // SameSite policy (default: Lax)
+	ExcludedPaths  []string `json:"excludedPaths"`  // Paths to skip auth
+	ForwardAuth    string   `json:"forwardAuth"`    // Token to forward: "none", "id_token", "access_token" (default: none)
 }
 
 // Validate checks that all required configuration fields are present and valid.
@@ -49,6 +55,12 @@ func (c *Config) Validate() error {
 		return errors.New("cookieSameSite must be one of: Strict, Lax, None")
 	}
 
+	// Validate ForwardAuth value
+	forwardAuth := strings.ToLower(c.ForwardAuth)
+	if forwardAuth != "" && forwardAuth != ForwardAuthNone && forwardAuth != ForwardAuthIDToken && forwardAuth != ForwardAuthAccessToken {
+		return errors.New("forwardAuth must be one of: none, id_token, access_token")
+	}
+
 	// Ensure scopes include openid
 	hasOpenID := false
 	for _, scope := range c.Scopes {
@@ -62,6 +74,14 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// GetForwardAuth returns the normalized forward auth setting.
+func (c *Config) GetForwardAuth() string {
+	if c.ForwardAuth == "" {
+		return ForwardAuthNone
+	}
+	return strings.ToLower(c.ForwardAuth)
 }
 
 // GetSameSite returns the http.SameSite value based on configuration.

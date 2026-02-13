@@ -44,8 +44,7 @@ experimental:
 | `cookieSecure` | `true` | Set to `true` for HTTPS (required in production) |
 | `cookieSameSite` | `Lax` | Cookie SameSite policy: `Strict`, `Lax`, or `None` |
 | `excludedPaths` | `[]` | Paths to exclude from authentication |
-| `forwardAccessToken` | `true` | Forward access token in `Authorization` header |
-| `forwardIDToken` | `false` | Forward ID token instead of access token |
+| `forwardAuth` | `none` | Token to forward in `Authorization` header: `none`, `id_token`, or `access_token` |
 
 ### Example Configuration
 
@@ -68,7 +67,7 @@ http:
           excludedPaths:
             - "/health"
             - "/metrics"
-          forwardAccessToken: true
+          forwardAuth: "access_token"
 ```
 
 ## Security Configuration
@@ -163,10 +162,11 @@ http:
 
 ### Token Forwarding
 
-The plugin forwards tokens to backend services via the `Authorization: Bearer <token>` header. Configure which token to forward:
+The plugin can forward tokens to backend services via the `Authorization: Bearer <token>` header. Configure using the `forwardAuth` option:
 
-- `forwardAccessToken: true` (default) - Forward the access token
-- `forwardIDToken: true` - Forward the ID token instead
+- `forwardAuth: "none"` (default) - Do not forward any token
+- `forwardAuth: "access_token"` - Forward the access token
+- `forwardAuth: "id_token"` - Forward the ID token
 
 ### JWT Signature Validation
 

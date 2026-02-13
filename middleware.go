@@ -66,11 +66,14 @@ func (m *OIDCMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// If refresh fails, continue with existing token (might still be valid)
 		}
 
-		// Session is valid, forward request with Bearer token
+		// Session is valid, forward request with Bearer token if configured
 		if !session.IsExpired() {
-			if m.config.ForwardIDToken && session.IDToken != "" {
-				r.Header.Set("Authorization", "Bearer "+session.IDToken)
-			} else if m.config.ForwardAccessToken {
+			switch m.config.GetForwardAuth() {
+			case ForwardAuthIDToken:
+				if session.IDToken != "" {
+					r.Header.Set("Authorization", "Bearer "+session.IDToken)
+				}
+			case ForwardAuthAccessToken:
 				r.Header.Set("Authorization", "Bearer "+session.AccessToken)
 			}
 			m.next.ServeHTTP(w, r)

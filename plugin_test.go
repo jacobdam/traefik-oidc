@@ -29,8 +29,8 @@ func TestCreateConfig(t *testing.T) {
 		t.Error("Expected CookieSecure to be true by default")
 	}
 
-	if !config.ForwardAccessToken {
-		t.Error("Expected ForwardAccessToken to be true by default")
+	if config.ForwardAuth != ForwardAuthNone {
+		t.Errorf("Expected ForwardAuth to be 'none' by default, got %s", config.ForwardAuth)
 	}
 
 	if len(config.Scopes) != 3 || config.Scopes[0] != "openid" {
@@ -102,6 +102,39 @@ func TestConfigValidation(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "cookieSameSite must be one of",
+		},
+		{
+			name: "invalid forwardAuth",
+			config: &Config{
+				ProviderURL:          "https://accounts.google.com",
+				ClientID:             "test-client",
+				SessionEncryptionKey: "01234567890123456789012345678901",
+				ForwardAuth:          "invalid",
+			},
+			expectError: true,
+			errorMsg:    "forwardAuth must be one of",
+		},
+		{
+			name: "valid forwardAuth access_token",
+			config: &Config{
+				ProviderURL:          "https://accounts.google.com",
+				ClientID:             "test-client",
+				SessionEncryptionKey: "01234567890123456789012345678901",
+				Scopes:               []string{"openid"},
+				ForwardAuth:          "access_token",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid forwardAuth id_token",
+			config: &Config{
+				ProviderURL:          "https://accounts.google.com",
+				ClientID:             "test-client",
+				SessionEncryptionKey: "01234567890123456789012345678901",
+				Scopes:               []string{"openid"},
+				ForwardAuth:          "id_token",
+			},
+			expectError: false,
 		},
 	}
 
@@ -746,6 +779,76 @@ func TestSanitizeRedirectURL(t *testing.T) {
 	}
 }
 
+func TestForwardAuthOptions(t *testing.T) {
+	server := setupMockOIDCServer()
+	defer server.Close()
+
+	tests := []struct {
+		name           string
+		forwardAuth    string
+		expectedHeader string
+	}{
+		{"none", ForwardAuthNone, ""},
+		{"access_token", ForwardAuthAccessToken, "Bearer test-access-token"},
+		{"id_token", ForwardAuthIDToken, "Bearer test-id-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &Config{
+				ProviderURL:          server.URL,
+				ClientID:             "test-client",
+				SessionEncryptionKey: "01234567890123456789012345678901",
+				Scopes:               []string{"openid"},
+				CallbackPath:         "/oauth2/callback",
+				LogoutPath:           "/oauth2/logout",
+				CookieName:           "oidc_session",
+				CookieSameSite:       "Lax",
+				ForwardAuth:          tt.forwardAuth,
+			}
+
+			var receivedAuthHeader string
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedAuthHeader = r.Header.Get("Authorization")
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware, err := New(context.Background(), next, config, "test")
+			if err != nil {
+				t.Fatalf("Failed to create middleware: %v", err)
+			}
+
+			// Create a valid session
+			crypto, _ := NewCrypto(config.SessionEncryptionKey)
+			sm := NewSessionManager(crypto, config.CookieName, false, 2)
+
+			session := &Session{
+				AccessToken: "test-access-token",
+				IDToken:     "test-id-token",
+				Expiry:      time.Now().Add(time.Hour),
+			}
+
+			recorder := httptest.NewRecorder()
+			if err := sm.SetSession(recorder, session); err != nil {
+				t.Fatalf("Failed to set session: %v", err)
+			}
+
+			req := httptest.NewRequest("GET", "/protected", nil)
+			req.Host = "example.com"
+			for _, cookie := range recorder.Result().Cookies() {
+				req.AddCookie(cookie)
+			}
+
+			responseRecorder := httptest.NewRecorder()
+			middleware.ServeHTTP(responseRecorder, req)
+
+			if receivedAuthHeader != tt.expectedHeader {
+				t.Errorf("Expected Authorization header %q, got %q", tt.expectedHeader, receivedAuthHeader)
+			}
+		})
+	}
+}
+
 func TestAuthorizationHeaderSpoofingPrevention(t *testing.T) {
 	server := setupMockOIDCServer()
 	defer server.Close()
@@ -759,8 +862,7 @@ func TestAuthorizationHeaderSpoofingPrevention(t *testing.T) {
 		LogoutPath:           "/oauth2/logout",
 		CookieName:           "oidc_session",
 		CookieSameSite:       "Lax",
-		ForwardAccessToken:   false, // Disable token forwarding
-		ForwardIDToken:       false, // Disable token forwarding
+		ForwardAuth:          ForwardAuthNone, // Disable token forwarding
 	}
 
 	var receivedAuthHeader string
