@@ -746,6 +746,70 @@ func TestSanitizeRedirectURL(t *testing.T) {
 	}
 }
 
+func TestAuthorizationHeaderSpoofingPrevention(t *testing.T) {
+	server := setupMockOIDCServer()
+	defer server.Close()
+
+	config := &Config{
+		ProviderURL:          server.URL,
+		ClientID:             "test-client",
+		SessionEncryptionKey: "01234567890123456789012345678901",
+		Scopes:               []string{"openid"},
+		CallbackPath:         "/oauth2/callback",
+		LogoutPath:           "/oauth2/logout",
+		CookieName:           "oidc_session",
+		CookieSameSite:       "Lax",
+		ForwardAccessToken:   false, // Disable token forwarding
+		ForwardIDToken:       false, // Disable token forwarding
+	}
+
+	var receivedAuthHeader string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuthHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware, err := New(context.Background(), next, config, "test")
+	if err != nil {
+		t.Fatalf("Failed to create middleware: %v", err)
+	}
+
+	// Create a valid session
+	crypto, _ := NewCrypto(config.SessionEncryptionKey)
+	sm := NewSessionManager(crypto, config.CookieName, false, 2)
+
+	session := &Session{
+		AccessToken: "valid-session-token",
+		Expiry:      time.Now().Add(time.Hour),
+	}
+
+	recorder := httptest.NewRecorder()
+	if err := sm.SetSession(recorder, session); err != nil {
+		t.Fatalf("Failed to set session: %v", err)
+	}
+
+	// Create request with spoofed Authorization header AND valid session cookie
+	req := httptest.NewRequest("GET", "/protected", nil)
+	req.Host = "example.com"
+	req.Header.Set("Authorization", "Bearer malicious-spoofed-token")
+	for _, cookie := range recorder.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	responseRecorder := httptest.NewRecorder()
+	middleware.ServeHTTP(responseRecorder, req)
+
+	// The spoofed token should NOT reach the backend
+	if receivedAuthHeader == "Bearer malicious-spoofed-token" {
+		t.Error("Spoofed Authorization header should not reach backend")
+	}
+
+	// Since forwarding is disabled, header should be empty
+	if receivedAuthHeader != "" {
+		t.Errorf("Expected empty Authorization header, got %q", receivedAuthHeader)
+	}
+}
+
 func TestLogoutOpenRedirectPrevention(t *testing.T) {
 	server := setupMockOIDCServer()
 	defer server.Close()

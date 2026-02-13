@@ -45,6 +45,11 @@ func (m *OIDCMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Always clear incoming Authorization header to prevent token spoofing.
+	// Attackers could send a malicious Bearer token to impersonate other users.
+	// The middleware will set a valid token from the session if configured.
+	r.Header.Del("Authorization")
+
 	// Check for existing session
 	session, err := sessionManager.GetSession(r)
 	if err == nil && session != nil {
