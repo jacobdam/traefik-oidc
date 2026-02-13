@@ -609,3 +609,199 @@ func TestOIDCProviderCaching(t *testing.T) {
 		t.Errorf("Expected 1 discovery call, got %d", callCount)
 	}
 }
+
+func TestIsSameOrigin(t *testing.T) {
+	server := setupMockOIDCServer()
+	defer server.Close()
+
+	config := &Config{
+		ProviderURL:          server.URL,
+		ClientID:             "test-client",
+		SessionEncryptionKey: "01234567890123456789012345678901",
+		Scopes:               []string{"openid"},
+		CallbackPath:         "/oauth2/callback",
+		LogoutPath:           "/oauth2/logout",
+		CookieName:           "oidc_session",
+		CookieSameSite:       "Lax",
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware, err := New(context.Background(), next, config, "test")
+	if err != nil {
+		t.Fatalf("Failed to create middleware: %v", err)
+	}
+
+	m := middleware.(*OIDCMiddleware)
+
+	tests := []struct {
+		name        string
+		redirectURL string
+		host        string
+		fwdHost     string
+		expected    bool
+	}{
+		// Relative URLs should be allowed
+		{"relative path", "/dashboard", "example.com", "", true},
+		{"relative path with query", "/page?foo=bar", "example.com", "", true},
+		{"root path", "/", "example.com", "", true},
+
+		// Protocol-relative URLs should be rejected (potential bypass)
+		{"protocol relative URL", "//evil.com/path", "example.com", "", false},
+
+		// Same-origin absolute URLs should be allowed
+		{"same origin https", "https://example.com/dashboard", "example.com", "", true},
+		{"same origin http", "http://example.com/dashboard", "example.com", "", true},
+		{"same origin case insensitive", "https://EXAMPLE.COM/dashboard", "example.com", "", true},
+
+		// Different origin URLs should be rejected
+		{"different host", "https://evil.com/dashboard", "example.com", "", false},
+		{"subdomain", "https://sub.example.com/dashboard", "example.com", "", false},
+		{"different port", "https://example.com:8080/dashboard", "example.com", "", false},
+
+		// X-Forwarded-Host should be respected
+		{"same origin with forwarded host", "https://app.example.com/dashboard", "internal.local", "app.example.com", true},
+		{"different origin with forwarded host", "https://evil.com/dashboard", "internal.local", "app.example.com", false},
+
+		// Non-http(s) schemes should be rejected
+		{"javascript scheme", "javascript:alert(1)", "example.com", "", false},
+		{"data scheme", "data:text/html,<script>alert(1)</script>", "example.com", "", false},
+		{"file scheme", "file:///etc/passwd", "example.com", "", false},
+
+		// Empty and malformed URLs
+		{"empty URL", "", "example.com", "", false},
+		{"malformed URL", "://invalid", "example.com", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Host = tt.host
+			if tt.fwdHost != "" {
+				req.Header.Set("X-Forwarded-Host", tt.fwdHost)
+			}
+
+			result := m.isSameOrigin(tt.redirectURL, req)
+			if result != tt.expected {
+				t.Errorf("isSameOrigin(%q) with host %q = %v, want %v",
+					tt.redirectURL, tt.host, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeRedirectURL(t *testing.T) {
+	server := setupMockOIDCServer()
+	defer server.Close()
+
+	config := &Config{
+		ProviderURL:          server.URL,
+		ClientID:             "test-client",
+		SessionEncryptionKey: "01234567890123456789012345678901",
+		Scopes:               []string{"openid"},
+		CallbackPath:         "/oauth2/callback",
+		LogoutPath:           "/oauth2/logout",
+		CookieName:           "oidc_session",
+		CookieSameSite:       "Lax",
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware, err := New(context.Background(), next, config, "test")
+	if err != nil {
+		t.Fatalf("Failed to create middleware: %v", err)
+	}
+
+	m := middleware.(*OIDCMiddleware)
+
+	tests := []struct {
+		name        string
+		redirectURL string
+		host        string
+		expected    string
+	}{
+		{"empty URL returns root", "", "example.com", "/"},
+		{"valid relative path", "/dashboard", "example.com", "/dashboard"},
+		{"valid same-origin absolute", "https://example.com/page", "example.com", "https://example.com/page"},
+		{"malicious URL returns root", "https://evil.com/phish", "example.com", "/"},
+		{"javascript URL returns root", "javascript:alert(1)", "example.com", "/"},
+		{"protocol-relative returns root", "//evil.com/path", "example.com", "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Host = tt.host
+
+			result := m.sanitizeRedirectURL(tt.redirectURL, req)
+			if result != tt.expected {
+				t.Errorf("sanitizeRedirectURL(%q) = %q, want %q",
+					tt.redirectURL, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLogoutOpenRedirectPrevention(t *testing.T) {
+	server := setupMockOIDCServer()
+	defer server.Close()
+
+	config := &Config{
+		ProviderURL:          server.URL,
+		ClientID:             "test-client",
+		SessionEncryptionKey: "01234567890123456789012345678901",
+		Scopes:               []string{"openid"},
+		CallbackPath:         "/oauth2/callback",
+		LogoutPath:           "/oauth2/logout",
+		CookieName:           "oidc_session",
+		CookieSameSite:       "Lax",
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware, err := New(context.Background(), next, config, "test")
+	if err != nil {
+		t.Fatalf("Failed to create middleware: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		redirectURI      string
+		expectedLocation string
+	}{
+		{"no redirect param", "", "/"},
+		{"valid relative path", "/home", "/home"},
+		{"malicious external URL", "https://evil.com/phish", "/"},
+		{"javascript injection", "javascript:alert(document.cookie)", "/"},
+		{"protocol-relative URL", "//evil.com/steal", "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/oauth2/logout"
+			if tt.redirectURI != "" {
+				path += "?redirect_uri=" + tt.redirectURI
+			}
+			req := httptest.NewRequest("GET", path, nil)
+			req.Host = "example.com"
+
+			recorder := httptest.NewRecorder()
+			middleware.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusFound {
+				t.Errorf("Expected status 302, got %d", recorder.Code)
+			}
+
+			location := recorder.Header().Get("Location")
+			if location != tt.expectedLocation {
+				t.Errorf("Expected redirect to %q, got %q", tt.expectedLocation, location)
+			}
+		})
+	}
+}

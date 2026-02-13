@@ -2,6 +2,7 @@ package traefik_oidc
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -141,7 +142,9 @@ func (m *OIDCMiddleware) handleCallback(w http.ResponseWriter, r *http.Request, 
 	// Check for error response
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		http.Error(w, fmt.Sprintf("OAuth error: %s - %s", errParam, errDesc), http.StatusUnauthorized)
+		// Log detailed error for debugging, but return generic message to client
+		log.Printf("OAuth error: %s - %s", errParam, errDesc)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
@@ -186,7 +189,9 @@ func (m *OIDCMiddleware) handleCallback(w http.ResponseWriter, r *http.Request, 
 		m.config.ClientID,
 	)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Token exchange failed: %v", err), http.StatusInternalServerError)
+		// Log detailed error for debugging, but return generic message to client
+		log.Printf("Token exchange failed: %v", err)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -204,11 +209,8 @@ func (m *OIDCMiddleware) handleCallback(w http.ResponseWriter, r *http.Request, 
 	}
 	sm.ClearAuthState(w)
 
-	// Redirect to original URL
-	redirectURL := authState.OriginalURL
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
+	// Redirect to original URL (validated to prevent open redirect)
+	redirectURL := m.sanitizeRedirectURL(authState.OriginalURL, r)
 
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
@@ -218,11 +220,8 @@ func (m *OIDCMiddleware) handleLogout(w http.ResponseWriter, r *http.Request, sm
 	sm.ClearSession(w)
 	sm.ClearAuthState(w)
 
-	// Check for post-logout redirect
-	redirectURL := r.URL.Query().Get("redirect_uri")
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
+	// Check for post-logout redirect (validated to prevent open redirect)
+	redirectURL := m.sanitizeRedirectURL(r.URL.Query().Get("redirect_uri"), r)
 
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
@@ -289,4 +288,52 @@ func (m *OIDCMiddleware) getRedirectURI(r *http.Request) string {
 	}
 
 	return fmt.Sprintf("%s://%s%s", scheme, host, m.config.CallbackPath)
+}
+
+// getRequestHost returns the host for the current request, considering X-Forwarded-Host.
+func (m *OIDCMiddleware) getRequestHost(r *http.Request) string {
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		return fwdHost
+	}
+	return r.Host
+}
+
+// isSameOrigin checks if the given URL is same-origin with the current request.
+// This prevents open redirect vulnerabilities by ensuring redirects stay within
+// the same host.
+func (m *OIDCMiddleware) isSameOrigin(redirectURL string, r *http.Request) bool {
+	// Allow relative URLs (paths only)
+	if strings.HasPrefix(redirectURL, "/") && !strings.HasPrefix(redirectURL, "//") {
+		return true
+	}
+
+	parsed, err := url.Parse(redirectURL)
+	if err != nil {
+		return false
+	}
+
+	// Reject URLs without scheme or with different scheme protocol
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+
+	// Get the current request's host
+	requestHost := m.getRequestHost(r)
+
+	// Compare hosts (case-insensitive)
+	return strings.EqualFold(parsed.Host, requestHost)
+}
+
+// sanitizeRedirectURL validates and sanitizes a redirect URL.
+// Returns "/" if the URL is invalid or not same-origin.
+func (m *OIDCMiddleware) sanitizeRedirectURL(redirectURL string, r *http.Request) string {
+	if redirectURL == "" {
+		return "/"
+	}
+
+	if !m.isSameOrigin(redirectURL, r) {
+		return "/"
+	}
+
+	return redirectURL
 }
