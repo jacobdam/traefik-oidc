@@ -170,6 +170,14 @@ func TokenResponseToSession(resp *TokenResponse) (*Session, error) {
 	// If ID token exists, extract claims from it (usually has more user info)
 	if resp.IDToken != "" {
 		if claims, err := ParseJWTPayload(resp.IDToken); err == nil {
+			// If ID token expires before the session, use the earlier expiry.
+			// This prevents forwarding an expired id_token while the session is still "valid".
+			if claims.ExpiresAt > 0 {
+				idTokenExpiry := time.Unix(claims.ExpiresAt, 0)
+				if !session.Expiry.IsZero() && idTokenExpiry.Before(session.Expiry) {
+					session.Expiry = idTokenExpiry
+				}
+			}
 			if claims.Subject != "" {
 				session.Claims["sub"] = claims.Subject
 			}
